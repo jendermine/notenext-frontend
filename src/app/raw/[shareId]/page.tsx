@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, use } from 'react';
 import { importKey, decryptData } from '@/lib/crypto';
+import { fetchNote } from '@/lib/api';
 import { Loader2 } from 'lucide-react';
 
 interface RawPageProps {
@@ -41,8 +42,8 @@ export default function RawPastePage(props: RawPageProps) {
         const hash = window.location.hash;
         const hexKey = hash && hash.length > 1 ? hash.substring(1) : null;
 
-        // 2. Fetch ciphertext from local proxy
-        const res = await fetch(`/api/notes/${shareId}`);
+        // 2. Fetch ciphertext directly from the backend
+        const res = await fetchNote(shareId);
         if (res.status === 404) {
           throw new Error('This note does not exist or has expired.');
         }
@@ -54,7 +55,11 @@ export default function RawPastePage(props: RawPageProps) {
 
         // 3. Decrypt or Decode
         let contentStr = '';
-        if (hexKey) {
+
+        // Check if the API returned plain content directly (no ciphertext)
+        if (note.content && !note.ciphertext) {
+          contentStr = note.content;
+        } else if (hexKey) {
           try {
             const cryptoKey = await importKey(hexKey);
             contentStr = await decryptData(note.ciphertext, note.iv, cryptoKey);

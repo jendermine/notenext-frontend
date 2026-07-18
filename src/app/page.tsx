@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Settings, Save, Check, Loader2, Copy, ExternalLink, RefreshCw } from 'lucide-react';
+import { Settings, Save, Check, Loader2, Copy, ExternalLink, RefreshCw, Lock } from 'lucide-react';
 import { generateKey, exportKey, encryptData } from '@/lib/crypto';
+import { API_BASE_URL, saveDeleteToken } from '@/lib/api';
 
 // Language options matching Katbin clone requirements
 const LANGUAGES = [
@@ -25,13 +26,16 @@ const LANGUAGES = [
   { value: 'bash', label: 'Bash' },
 ];
 
+// Backend accepts a duration string clamped to [1 minute, 30 days] and defaults
+// to 1 day (see /docs). Values below use the API's duration format; anything
+// longer than 30 days is not supported, so there is no "Never" option.
 const EXPIRATIONS = [
   { value: '10m', label: '10 Minutes' },
   { value: '1h', label: '1 Hour' },
+  { value: '6h', label: '6 Hours' },
   { value: '1d', label: '1 Day' },
-  { value: '1w', label: '1 Week' },
-  { value: '1m', label: '1 Month' },
-  { value: 'never', label: 'Never' },
+  { value: '7d', label: '7 Days' },
+  { value: '30d', label: '30 Days (Max)' },
 ];
 
 export const runtime = 'edge';
@@ -43,7 +47,7 @@ export default function CreatePastePage() {
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [sharedBy, setSharedBy] = useState('');
-  const [language, setLanguage] = useState('auto');
+  const [language, setLanguage] = useState('text');
   const [expiration, setExpiration] = useState('1d');
   const [burnAfterRead, setBurnAfterRead] = useState(false);
   const [maxReads, setMaxReads] = useState('');
@@ -145,8 +149,8 @@ export default function CreatePastePage() {
         ciphertext = utf8ToBase64(content);
       }
 
-      // 5. Send package to the local proxy API route
-      const response = await fetch('/api/notes/share', {
+      // 5. Send package directly to the backend API
+      const response = await fetch(`${API_BASE_URL}/api/notes/share`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -155,7 +159,7 @@ export default function CreatePastePage() {
           ciphertext,
           iv,
           sharedBy: sharedBy.trim() || 'Anonymous',
-          expiresIn: expiration === 'never' ? undefined : expiration,
+          expiresIn: expiration,
           burnAfterRead,
           maxReads: maxReads.trim() ? parseInt(maxReads, 10) : null,
           rawData: !encryptNote,
@@ -167,19 +171,17 @@ export default function CreatePastePage() {
       }
 
       const note = await response.json();
-      
-      // Save creator status in localStorage (local reference only, security token is in HttpOnly cookie)
-      if (typeof window !== 'undefined') {
-        const createdNotes = JSON.parse(localStorage.getItem('nn_created_notes') || '[]');
-        createdNotes.push(note.shareId);
-        localStorage.setItem('nn_created_notes', JSON.stringify(createdNotes));
-      }
 
-      showToast('Note shared successfully!');
+      // Store the delete token locally so the creator can delete the note later.
+      saveDeleteToken(note.shareId, note.deleteToken);
+
+      showToast('Note shared and link copied!');
       
       // 6. Redirect to view page or display shortened URL
       const redirectUrl = encryptNote ? `/${note.shareId}#${keyHex}` : `/${note.shareId}`;
       const absoluteUrl = `${window.location.origin}${redirectUrl}`;
+
+      navigator.clipboard.writeText(absoluteUrl).catch(console.error);
 
       if (isUrl(content)) {
         // URL Shortener Mode: Show URL modal on home page
@@ -377,7 +379,7 @@ export default function CreatePastePage() {
           ) : !encryptNote ? (
             <span className="text-zinc-400">Raw Base64 mode active. Content is shared without client-side encryption.</span>
           ) : (
-            <span className="text-zinc-400">Paste, save, share! (Pasting just a URL will shorten it!)</span>
+            <span className="text-zinc-400 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> End to end encrypted sharing</span>
           )}
         </p>
 
